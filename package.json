@@ -1,0 +1,37 @@
+{
+  "name": "cyclejs-component",
+  "version": "1.0.0",
+  "description": "Simple library for making clean Cycle.js components",
+  "main": "./dist/index.js",
+  "exports": "./dist/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\"",
+    "build": "npx babel src --out-dir dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tpresley/cyclejs-component.git"
+  },
+  "keywords": [
+    "cycle",
+    "cyclejs",
+    "component"
+  ],
+  "author": "Troy Presley <troy.presley@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/tpresley/cyclejs-component/issues"
+  },
+  "homepage": "https://github.com/tpresley/cyclejs-component#readme",
+  "dependencies": {
+    "@cycle/isolate": "^5.2.0",
+    "@cycle/state": "^1.7.0",
+    "xstream": "^11.14.0"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.17.10",
+    "@babel/core": "^7.17.10",
+    "@babel/preset-env": "^7.17.10",
+    "babel-loader": "^8.2.5"
+  }
+}
