@@ -1,16 +1,38 @@
 'use strict'
 
-import xs from 'xstream'
+import xs, { Stream } from 'xstream'
 import dropRepeats from 'xstream/extra/dropRepeats'
 
 
 
-export default function switchable(factories, name$, initial, switched=['DOM']) {
-  const withInitial$ = name$
-    .compose(dropRepeats())
-    .startWith(initial)
-    .remember()
-  return sources => _switchable(factories, sources, withInitial$, switched)
+export default function switchable(factories, name$, initial, switched=['DOM'], stateSourceName='STATE') {
+  const nameType     = typeof name$
+
+  if (!name$) throw new Error(`Missing 'name$' parameter for switchable()`)
+  if (!(nameType === 'string' || nameType === 'function' || name$ instanceof Stream)) {
+    throw new Error(`Invalid 'name$' parameter for switchable(): expects Stream, String, or Function`)
+  }
+
+  if (name$ instanceof Stream) {
+    const withInitial$ = name$
+      .compose(dropRepeats())
+      .startWith(initial)
+      .remember()
+    return sources => _switchable(factories, sources, withInitial$, switched)
+  } else {
+    const mapFunction = (nameType === 'function' && name$) || (state => state[name$])
+    return sources => {
+      const state$ = sources && ((typeof stateSourceName === 'string' && sources[stateSourceName]) || sources.STATE || sources.state).stream
+      if (!state$ instanceof Stream) throw new Error(`Could not find the state source: ${ stateSourceName }`)
+      const _name$ = state$
+        .map(mapFunction)
+        .filter(name => typeof name === 'string')
+        .compose(dropRepeats())
+        .startWith(initial)
+        .remember()
+      return _switchable(factories, sources, _name$, switched, stateSourceName)
+    }
+  }
 }
 
 
