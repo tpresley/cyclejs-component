@@ -132,10 +132,11 @@ class Component {
       })
     }
 
-    if (IS_ROOT_COMPONENT && typeof this.action === 'undefined' && typeof this.model === 'undefined') {
-      this.initialState = true
+    if (IS_ROOT_COMPONENT && typeof this.intent === 'undefined' && typeof this.model === 'undefined') {
+      this.initialState = initialState || true
+      this.intent = _ => ({__NOOP_ACTION__:xs.never()})
       this.model = {
-        [INITIALIZE_ACTION]: state => state
+        __NOOP_ACTION__: state => state
       }
     }
     IS_ROOT_COMPONENT = false
@@ -187,7 +188,7 @@ class Component {
 
     const action$  = ((runner instanceof Stream) ? runner : (runner.apply && runner(this.sources) || xs.never()))
     const wrapped$ = concat(xs.of({ type: BOOTSTRAP_ACTION }), action$)
-      .compose(delay(0))
+      .compose(delay(10))
 
     let initialApiData
     if (requestSource && typeof requestSource.select == 'function') {
@@ -314,11 +315,10 @@ class Component {
       return
     }
 
-    const onNormal = this.makeOnAction(this.action$, false, this.action$)
-
-    const initial = { type: INITIALIZE_ACTION, data: this.initialState }
+    const initial  = { type: INITIALIZE_ACTION, data: this.initialState }
     const shimmed$ = this.initialState ? concat(xs.of(initial), this.action$).compose(delay(0)) : this.action$
     const onState  = this.makeOnAction(shimmed$, true, this.action$)
+    const onNormal = this.makeOnAction(this.action$, false, this.action$)
 
 
     const modelEntries = Object.entries(this.model)
