@@ -84,6 +84,8 @@ class Component {
   // view
   // children
   // initialState
+  // calculated
+  // storeCalculatedInState
   // DOMSourceName
   // stateSourceName
   // requestSourceName
@@ -104,7 +106,7 @@ class Component {
   // [ OUTPUT ]
   // sinks
 
-  constructor({ name='NO NAME', sources, intent, request, model, response, view, children={}, initialState, DOMSourceName='DOM', stateSourceName='STATE', requestSourceName='HTTP' }) {
+  constructor({ name='NO NAME', sources, intent, request, model, response, view, children={}, initialState, calculated, storeCalculatedInState=false, DOMSourceName='DOM', stateSourceName='STATE', requestSourceName='HTTP' }) {
     if (!sources || typeof sources != 'object') throw new Error('Missing or invalid sources')
 
     this.name     = name
@@ -116,6 +118,8 @@ class Component {
     this.view     = view
     this.children = children
     this.initialState      = initialState
+    this.calculated        = calculated
+    this.storeCalculatedInState = storeCalculatedInState
     this.DOMSourceName     = DOMSourceName
     this.stateSourceName   = stateSourceName
     this.requestSourceName = requestSourceName
@@ -255,7 +259,8 @@ class Component {
               }
 
               if (actionType === 'function') {
-                const result = action(this.currentState, req)
+                const enhancedState = this.addCalculated(this.currentState)
+                const result = action(enhancedState, req)
                 return xs.of({ ...obj, data: result })
               } else {
                 this.action$.shamefullySendNext(obj)
@@ -293,7 +298,7 @@ class Component {
     if (this.model != undefined) {
       if (this.model[INITIALIZE_ACTION] === undefined) {
         this.model[INITIALIZE_ACTION] = {
-          [this.stateSourceName]: (_, data) => ({ ...data })
+          [this.stateSourceName]: (_, data) => ({ ...this.addCalculated(data) })
         }
       } else {
         Object.keys(this.model[INITIALIZE_ACTION]).forEach(name => {
@@ -448,8 +453,10 @@ class Component {
     const state        = (this.sources[this.stateSourceName] && this.sources[this.stateSourceName].stream) || xs.never()
     const renderParams = { ...this.children$[this.DOMSourceName] }
 
-    renderParams.state                 = state
-    renderParams[this.stateSourceName] = state
+    const enhancedState = state.map(this.addCalculated.bind(this))
+
+    renderParams.state                 = enhancedState
+    renderParams[this.stateSourceName] = enhancedState
 
     const pulled = Object.entries(renderParams).reduce((acc, [name, stream]) => {
       acc.names.push(name)
@@ -508,12 +515,14 @@ class Component {
           if (data && data.data && data._reqId) data = data.data
           if (isStateSink) {
             return (state) => {
-              const newState = reducer(state, data, next, action.req)
+              const enhancedState = this.addCalculated(state)
+              const newState = reducer(enhancedState, data, next, action.req)
               if (newState == ABORT) return state
-              return newState
+              return this.cleanupCalculated(newState)
             }
           } else {
-            const reduced = reducer(this.currentState, data, next, action.req)
+            const enhancedState = this.addCalculated(this.currentState)
+            const reduced = reducer(enhancedState, data, next, action.req)
             const type = typeof reduced
             const _reqId = action._reqId || (action.req && action.req.id)
             if (['string', 'number', 'boolean', 'function'].includes(type)) return reduced
@@ -534,6 +543,37 @@ class Component {
 
       return returnStream$
     }
+  }
+
+  addCalculated(state) {
+    if (!this.calculated || typeof state !== 'object') return state
+    if (typeof this.calculated !== 'object') throw new Error(`'calculated' parameter must be an object mapping calculated state field named to functions`)
+    const entries = Object.entries(this.calculated)
+    const calculated = entries.reduce((acc, [field, fn]) => {
+      if (typeof fn !== 'function') throw new Error(`Missing or invalid calculator function for calculated field '${ field }`)
+      try {
+        acc[field] = fn(state)
+      } catch(e) {
+        console.warn(`Calculated field '${ field }' threw an error during calculation: ${ e.message }`)
+      }
+      return acc
+    }, {})
+    return { ...state, ...calculated }
+  }
+
+  cleanupCalculated(state) {
+    if (this.storeCalculatedInState) return this.addCalculated(state)
+    if (!this.calculated || !state || typeof state !== 'object') return state
+    const keys = Object.keys(this.calculated)
+    const copy = { ...state }
+    keys.forEach(key => {
+      if (this.initialState && typeof this.initialState[key] !== 'undefined') {
+        copy[key] = this.initialState[key]
+      } else {
+        delete copy[key]
+      }
+    })
+    return copy
   }
 
 }
