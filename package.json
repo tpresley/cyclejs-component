@@ -1,6 +1,6 @@
 {
   "name": "cyclejs-component",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Simple library for making clean Cycle.js components",
   "main": "./dist/index.js",
   "exports": "./dist/index.js",
