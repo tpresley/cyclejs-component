@@ -106,17 +106,18 @@ class Component {
   // [ OUTPUT ]
   // sinks
 
-  constructor({ name='NO NAME', sources, intent, request, model, response, view, children={}, initialState, calculated, storeCalculatedInState=false, DOMSourceName='DOM', stateSourceName='STATE', requestSourceName='HTTP' }) {
+  constructor({ name='NO NAME', sources, intent, request, model, response, view, children={}, components={}, initialState, calculated, storeCalculatedInState=false, DOMSourceName='DOM', stateSourceName='STATE', requestSourceName='HTTP' }) {
     if (!sources || typeof sources != 'object') throw new Error('Missing or invalid sources')
 
-    this.name     = name
-    this.sources  = sources
-    this.intent   = intent
-    this.request  = request
-    this.model    = model
-    this.response = response
-    this.view     = view
-    this.children = children
+    this.name       = name
+    this.sources    = sources
+    this.intent     = intent
+    this.request    = request
+    this.model      = model
+    this.response   = response
+    this.view       = view
+    this.children   = children
+    this.components = components
     this.initialState      = initialState
     this.calculated        = calculated
     this.storeCalculatedInState = storeCalculatedInState
@@ -475,7 +476,57 @@ class Component {
         }, {})
       })
 
-    this.vdom$ = throttled.map(this.view).remember().compose(this.log('View Rendered'))
+    const componentNames = Object.keys(this.components)
+    this.vdom$ = throttled
+      .fold((previousComponents, renderParams) => {
+        const vDom = this.view(renderParams)
+        const foundComponents = getComponents(vDom, componentNames)
+        const entries = Object.entries(foundComponents)
+        return entries.reduce((acc, [id, el]) => {
+          const componentName = el.sel
+          const props = el.data.props || {}
+          const children = el.children || []
+          if (previousComponents[id]) {
+            const entry = previousComponents[id]
+            console.log('ENTRY', entry)
+            acc[id] = entry
+            entry.props$.shamefullySendNext(props)
+            entry.children$.shamefullySendNext(children)
+          } else {
+            const factory   = this.components[componentName]
+            const props$    = xs.of(props)
+            const children$ = xs.of(children)
+            const sources   = { ...this.sources, [this.stateSourceName]: {stream: props$}, props$, children$ }
+            const sink$     = factory(sources)
+            acc[id] = { sink$, props$, children$ }
+          }
+          return acc
+        }, { '::ROOT::': vDom })
+      }, {})
+      .map(components => {
+        const root  = components['::ROOT::']
+        let ids = []
+        const vdom$ = Object.entries(components)
+          .filter(([id]) => id !== '::ROOT::')
+          .map(([id, val]) => {
+            ids.push(id)
+            return val.sink$[this.DOMSourceName]
+          })
+
+        if (vdom$.length === 0) return xs.of(root)
+
+        return xs.combine(...vdom$).map(vdoms => {
+          const withIds = vdoms.reduce((acc, vdom, index) => {
+            acc[ids[index]] = vdom
+            return acc
+          }, {})
+          return injectComponents(root, withIds, componentNames)
+        })
+      })
+      .flatten()
+      .filter(val => !!val)
+      .remember()
+      .compose(this.log('View Rendered'))
   }
 
   initSinks() {
@@ -608,4 +659,48 @@ class Component {
       return stream
     }
   }
+}
+
+
+
+function getComponents(currentElement, componentNames) {
+  if (!currentElement) return {}
+  const isComponent = componentNames.includes(currentElement.sel)
+  const props       = (currentElement.data && currentElement.data.props) || {}
+  const children    = currentElement.children || []
+
+  let found    = {}
+
+  if (isComponent) {
+    const id  = (props.id && JSON.stringify(id)) || JSON.stringify(currentElement.data.props)
+    const sel = currentElement.sel
+    found[`${ sel }::${ id }`] = currentElement
+  }
+
+  if (children.length > 0) {
+    children.map(child => getComponents(child, componentNames))
+            .forEach((child) => {
+              Object.entries(child).forEach(([id, el]) => found[id] = el)
+            })
+  }
+
+  return found
+}
+
+function injectComponents(currentElement, components, componentNames) {
+  const isComponent = componentNames.includes(currentElement.sel)
+  const props       = (currentElement.data && currentElement.data.props) || {}
+  const children    = currentElement.children || []
+
+  if (isComponent) {
+    const id  = (props.id && JSON.stringify(id)) || JSON.stringify(currentElement.data.props)
+    const sel = currentElement.sel
+    return components[`${ sel }::${ id }`]
+  }
+
+  if (children.length > 0) {
+    currentElement.children = children.map(child => injectComponents(child, components, componentNames))
+  }
+
+  return currentElement
 }
