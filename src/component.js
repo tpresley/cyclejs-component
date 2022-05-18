@@ -490,9 +490,14 @@ class Component {
     const componentNames = Object.keys(this.components)
     this.vdom$ = throttled
       .fold((previousComponents, renderParams) => {
-        const vDom = this.view(renderParams)
+        const vDom = this.view(renderParams) || { sel: 'div', data: {}, children: [] }
         const foundComponents = getComponents(vDom, componentNames)
         const entries = Object.entries(foundComponents)
+
+        const rootEntry = { '::ROOT::': vDom }
+
+        if (entries.length === 0) return rootEntry
+
         return entries.reduce((acc, [id, el]) => {
           const componentName = el.sel
           const data  = el.data
@@ -524,11 +529,16 @@ class Component {
             acc[id] = { sink$, props$, children$ }
           }
           return acc
-        }, { '::ROOT::': vDom })
+        }, rootEntry)
+
       }, {})
       .map(components => {
         const root  = components['::ROOT::']
         let ids = []
+        const entries = Object.entries(components)
+
+        if (entries.length === 1) return xs.of(root)
+
         const vdom$ = Object.entries(components)
           .filter(([id]) => id !== '::ROOT::')
           .map(([id, val]) => {
@@ -687,8 +697,12 @@ class Component {
 
 
 
-function getComponents(currentElement, componentNames) {
+function getComponents(currentElement, componentNames, isNestedElement=false) {
   if (!currentElement) return {}
+
+  if (currentElement.data?.componentsProcessed) return {}
+  if (!isNestedElement) currentElement.data.componentsProcessed = true
+
   const sel          = currentElement.sel
   const isCollection = sel && sel.toLowerCase() === 'collection'
   const isSwitchable = sel && sel.toLowerCase() === 'switchable'
@@ -725,7 +739,7 @@ function getComponents(currentElement, componentNames) {
   }
 
   if (children.length > 0) {
-    children.map(child => getComponents(child, componentNames))
+    children.map(child => getComponents(child, componentNames, true))
             .forEach((child) => {
               Object.entries(child).forEach(([id, el]) => found[id] = el)
             })
@@ -734,7 +748,11 @@ function getComponents(currentElement, componentNames) {
   return found
 }
 
-function injectComponents(currentElement, components, componentNames) {
+function injectComponents(currentElement, components, componentNames, isNestedElement=false) {
+  if (currentElement.data?.componentsInjected) return currentElement
+  if (!isNestedElement) currentElement.data.componentsInjected = true
+
+
   const sel          = currentElement.sel || 'NO SELECTOR'
   const isComponent  = ['collection', 'swtichable', ...componentNames].includes(sel)
   const isCollection = currentElement?.data?.isCollection
