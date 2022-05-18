@@ -1,6 +1,8 @@
 'use strict'
 
 import isolate from '@cycle/isolate'
+import collection from './collection.js'
+import { makeCollection } from '@cycle/state'
 
 import xs, { Stream } from 'xstream'
 import Delay from 'xstream/extra/delay.js'
@@ -106,7 +108,7 @@ class Component {
   // [ OUTPUT ]
   // sinks
 
-  constructor({ name='NO NAME', sources, intent, request, model, response, view, children={}, components={}, initialState, calculated, storeCalculatedInState=false, DOMSourceName='DOM', stateSourceName='STATE', requestSourceName='HTTP' }) {
+  constructor({ name='NO NAME', sources, intent, request, model, response, view, children={}, components={}, initialState, calculated, storeCalculatedInState=true, DOMSourceName='DOM', stateSourceName='STATE', requestSourceName='HTTP' }) {
     if (!sources || typeof sources != 'object') throw new Error('Missing or invalid sources')
 
     this.name       = name
@@ -451,13 +453,22 @@ class Component {
       return
     }
 
-    const state        = (this.sources[this.stateSourceName] && this.sources[this.stateSourceName].stream) || xs.never()
+    const state        = this.sources[this.stateSourceName]
     const renderParams = { ...this.children$[this.DOMSourceName] }
 
-    const enhancedState = state.map(this.addCalculated.bind(this))
+    const enhancedState = state && state.isolateSource(state, { get: state => this.addCalculated(state) })
+    const stateStream   = (enhancedState && enhancedState.stream) || xs.never()
 
-    renderParams.state                 = enhancedState
-    renderParams[this.stateSourceName] = enhancedState
+    renderParams.state                 = stateStream
+    renderParams[this.stateSourceName] = stateStream
+
+    if (this.sources.props$) {
+      renderParams.props = this.sources.props$
+    }
+
+    if (this.sources.children$) {
+      renderParams.children = this.sources.children$
+    }
 
     const pulled = Object.entries(renderParams).reduce((acc, [name, stream]) => {
       acc.names.push(name)
@@ -484,20 +495,42 @@ class Component {
         const entries = Object.entries(foundComponents)
         return entries.reduce((acc, [id, el]) => {
           const componentName = el.sel
-          const props = el.data.props || {}
+          const data  = el.data
+          const props = data.props || {}
           const children = el.children || []
+          const isCollection = data.isCollection || false
+          const isSwitchable = data.isSwitchable || false
           if (previousComponents[id]) {
             const entry = previousComponents[id]
-            console.log('ENTRY', entry)
             acc[id] = entry
             entry.props$.shamefullySendNext(props)
             entry.children$.shamefullySendNext(children)
+            if (!entry.droppedOne) {
+              const toDrop = entry.collectionSize ? entry.collectionSize - 1 : 0
+              entry.sink$[this.DOMSourceName] = entry.sink$[this.DOMSourceName].drop(toDrop)
+              if (!isCollection) entry.droppedOne = true
+            }
           } else {
             const factory   = this.components[componentName]
-            const props$    = xs.of(props)
-            const children$ = xs.of(children)
-            const sources   = { ...this.sources, [this.stateSourceName]: {stream: props$}, props$, children$ }
-            const sink$     = factory(sources)
+            const props$    = xs.create().startWith(props)
+            const children$ = xs.create().startWith(children)
+            const lense     = {
+              get: state => {
+                if (acc && acc[id]) acc[id].collectionSize = state[props.value].length
+                return state[props.value]
+              }
+            }
+            const sources   = { ...this.sources, [this.stateSourceName]: enhancedState.isolateSource(enhancedState, lense), props$, children$ }
+            let sink$
+            if (isCollection) {
+              const factory   = this.components[data.component]
+              sink$ = collection(factory, { get: state => state })(sources)
+              sink$[this.DOMSourceName] = sink$[this.DOMSourceName].drop(1)
+            } else if (isSwitchable) {
+
+            } else {
+              sink$ = factory(sources)
+            }
             acc[id] = { sink$, props$, children$ }
           }
           return acc
@@ -520,7 +553,8 @@ class Component {
             acc[ids[index]] = vdom
             return acc
           }, {})
-          return injectComponents(root, withIds, componentNames)
+          const injected = injectComponents(root, withIds, componentNames)
+          return injected
         })
       })
       .flatten()
@@ -665,16 +699,40 @@ class Component {
 
 function getComponents(currentElement, componentNames) {
   if (!currentElement) return {}
-  const isComponent = componentNames.includes(currentElement.sel)
-  const props       = (currentElement.data && currentElement.data.props) || {}
-  const children    = currentElement.children || []
+  const sel          = currentElement.sel
+  const isCollection = sel && sel.toLowerCase() === 'collection'
+  const isSwitchable = sel && sel.toLowerCase() === 'switchable'
+  const isComponent  = sel && (['collection', 'swtichable', ...componentNames].includes(currentElement.sel))
+  const props        = (currentElement.data && currentElement.data.props) || {}
+  const children     = currentElement.children || []
 
   let found    = {}
 
   if (isComponent) {
-    const id  = (props.id && JSON.stringify(id)) || JSON.stringify(currentElement.data.props)
-    const sel = currentElement.sel
-    found[`${ sel }::${ id }`] = currentElement
+    const id  = getComponentIdFromElement(currentElement)
+    if (isCollection) {
+      if (!props.component)                                throw new Error(`Collection element missing required 'component' property`)
+      if (typeof props.component !== 'string')             throw new Error(`Invalid 'component' property of collection element: found ${ typeof props.component } requires string`)
+      if (!componentNames.includes(props.component))       throw new Error(`Specified component for collection not found: ${ props.component }`)
+      if (!props.value || typeof props.value !== 'string') console.warn(`No valid array found in the 'value' property of collection ${ props.component }: no collection components will be created`)
+      currentElement.data.isCollection = true
+      currentElement.data.component = props.component
+      // currentElement.data.componentArray = props.value
+    }
+    if (isSwitchable) {
+      if (!props.components) throw new Error(`Switchable element missing required 'components' property`)
+      if (typeof props.components !== 'object') throw new Error(`Invalid 'components' property of switchable element: found ${ typeof props.components } requires object mapping names to component factories`)
+      const switchableComponents = Object.values(props.components)
+      if (!switchableComponents.every(comp => typeof comp === 'function')) throw new Error(`One or more invalid component factories for switchable element is not a valid component factory`)
+      if (!props.current || typeof props.current !== 'string') throw new Error(`Missing or invalid 'current' property for switchable element: found ${ typeof props.current } requires string`)
+      const switchableComponentNames = Object.keys(props.components)
+      if (!switchableComponentNames.includes(props.current)) throw new Error(`Component '${ props.current }' not found in switchable element`)
+      // if (!props.initial || typeof props.initial !== 'string') console.warn(`No initial component provided to switchable element: nothing will render until a value is provided to 'current'`)
+      currentElement.data.isSwitchable = true
+      currentElement.data.components = props.components
+      currentElement.data.currentComponent = props.current
+    }
+    found[id] = currentElement
   }
 
   if (children.length > 0) {
@@ -688,19 +746,35 @@ function getComponents(currentElement, componentNames) {
 }
 
 function injectComponents(currentElement, components, componentNames) {
-  const isComponent = componentNames.includes(currentElement.sel)
-  const props       = (currentElement.data && currentElement.data.props) || {}
-  const children    = currentElement.children || []
+  const sel          = currentElement.sel || 'NO SELECTOR'
+  const isComponent  = ['collection', 'swtichable', ...componentNames].includes(sel)
+  const isCollection = currentElement.data.isCollection
+  const isSwitchable = currentElement.data.isSwitchable
+  const props        = (currentElement.data && currentElement.data.props) || {}
+  const children     = currentElement.children || []
 
   if (isComponent) {
-    const id  = (props.id && JSON.stringify(id)) || JSON.stringify(currentElement.data.props)
-    const sel = currentElement.sel
-    return components[`${ sel }::${ id }`]
-  }
-
-  if (children.length > 0) {
-    currentElement.children = children.map(child => injectComponents(child, components, componentNames))
+    const id  = getComponentIdFromElement(currentElement)
+    const component = components[id]
+    let children
+    currentElement.sel = 'div'
+    if (isCollection) {
+      delete currentElement.elm
+      children = Object.entries(component).filter(([key, value]) => key !== 'data' && key !== 'key').map(([key, value], index) => value)
+    } else {
+      children = [component]
+    }
+    currentElement.children = children
+  } else if (children.length > 0) {
+    currentElement.children = children.map(child => injectComponents(child, components, componentNames)).flat()
   }
 
   return currentElement
+}
+
+function getComponentIdFromElement(el) {
+  const sel   = el.sel
+  const props = (el.data && el.data.props) || {}
+  const id = (props.id && JSON.stringify(props.id)) || JSON.stringify(props)
+  return `${ sel }::${ id }`
 }
