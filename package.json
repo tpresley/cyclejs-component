@@ -6,7 +6,8 @@
   "exports": "./dist/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\"",
-    "build": "npx babel src --out-dir dist"
+    "build": "npx babel src --out-dir dist",
+    "start": "npx babel src --out-dir dist --watch"
   },
   "repository": {
     "type": "git",
