@@ -2,7 +2,7 @@
 
 import isolate from '@cycle/isolate'
 import collection from './collection.js'
-import { makeCollection } from '@cycle/state'
+import { StateSource } from '@cycle/state'
 
 import xs, { Stream } from 'xstream'
 import Delay from 'xstream/extra/delay.js'
@@ -505,22 +505,12 @@ class Component {
             acc[id] = entry
             entry.props$.shamefullySendNext(props)
             entry.children$.shamefullySendNext(children)
-            if (!entry.droppedOne) {
-              const toDrop = entry.collectionSize ? entry.collectionSize - 1 : 0
-              entry.sink$[this.DOMSourceName] = entry.sink$[this.DOMSourceName].drop(toDrop)
-              if (!isCollection) entry.droppedOne = true
-            }
           } else {
             const factory   = this.components[componentName]
             const props$    = xs.create().startWith(props)
             const children$ = xs.create().startWith(children)
-            const lense     = {
-              get: state => {
-                if (acc && acc[id]) acc[id].collectionSize = state[props.value].length
-                return state[props.value]
-              }
-            }
-            const sources   = { ...this.sources, [this.stateSourceName]: enhancedState.isolateSource(enhancedState, lense), props$, children$ }
+            const propState = new StateSource(props$.map(val => val.value))
+            const sources   = { ...this.sources, [this.stateSourceName]: propState, props$, children$ }
             let sink$
             if (isCollection) {
               const factory   = this.components[data.component]
@@ -711,23 +701,22 @@ function getComponents(currentElement, componentNames) {
   if (isComponent) {
     const id  = getComponentIdFromElement(currentElement)
     if (isCollection) {
-      if (!props.component)                                throw new Error(`Collection element missing required 'component' property`)
-      if (typeof props.component !== 'string')             throw new Error(`Invalid 'component' property of collection element: found ${ typeof props.component } requires string`)
-      if (!componentNames.includes(props.component))       throw new Error(`Specified component for collection not found: ${ props.component }`)
-      if (!props.value || typeof props.value !== 'string') console.warn(`No valid array found in the 'value' property of collection ${ props.component }: no collection components will be created`)
+      if (!props.component)                            throw new Error(`Collection element missing required 'component' property`)
+      if (typeof props.component !== 'string')         throw new Error(`Invalid 'component' property of collection element: found ${ typeof props.component } requires string`)
+      if (!componentNames.includes(props.component))   throw new Error(`Specified component for collection not found: ${ props.component }`)
+      if (!props.value || !Array.isArray(props.value)) console.warn(`No valid array found in the 'value' property of collection ${ props.component }: no collection components will be created`)
       currentElement.data.isCollection = true
       currentElement.data.component = props.component
       // currentElement.data.componentArray = props.value
     }
     if (isSwitchable) {
-      if (!props.components) throw new Error(`Switchable element missing required 'components' property`)
+      if (!props.components)                    throw new Error(`Switchable element missing required 'components' property`)
       if (typeof props.components !== 'object') throw new Error(`Invalid 'components' property of switchable element: found ${ typeof props.components } requires object mapping names to component factories`)
       const switchableComponents = Object.values(props.components)
       if (!switchableComponents.every(comp => typeof comp === 'function')) throw new Error(`One or more invalid component factories for switchable element is not a valid component factory`)
-      if (!props.current || typeof props.current !== 'string') throw new Error(`Missing or invalid 'current' property for switchable element: found ${ typeof props.current } requires string`)
+      if (!props.current || typeof props.current !== 'string')             throw new Error(`Missing or invalid 'current' property for switchable element: found ${ typeof props.current } requires string`)
       const switchableComponentNames = Object.keys(props.components)
-      if (!switchableComponentNames.includes(props.current)) throw new Error(`Component '${ props.current }' not found in switchable element`)
-      // if (!props.initial || typeof props.initial !== 'string') console.warn(`No initial component provided to switchable element: nothing will render until a value is provided to 'current'`)
+      if (!switchableComponentNames.includes(props.current))               throw new Error(`Component '${ props.current }' not found in switchable element`)
       currentElement.data.isSwitchable = true
       currentElement.data.components = props.components
       currentElement.data.currentComponent = props.current
@@ -748,8 +737,8 @@ function getComponents(currentElement, componentNames) {
 function injectComponents(currentElement, components, componentNames) {
   const sel          = currentElement.sel || 'NO SELECTOR'
   const isComponent  = ['collection', 'swtichable', ...componentNames].includes(sel)
-  const isCollection = currentElement.data.isCollection
-  const isSwitchable = currentElement.data.isSwitchable
+  const isCollection = currentElement?.data?.isCollection
+  const isSwitchable = currentElement?.data?.isSwitchable
   const props        = (currentElement.data && currentElement.data.props) || {}
   const children     = currentElement.children || []
 
