@@ -519,13 +519,15 @@ class Component {
             let sink$
             if (isCollection) {
               const factory   = this.components[data.component]
-              sink$ = collection(factory, { get: state => state })(sources)
-              sink$[this.DOMSourceName] = sink$[this.DOMSourceName].drop(1)
+              const lense     = { get: state => state }
+              sink$ = collection(factory, lense)(sources)
             } else if (isSwitchable) {
 
             } else {
               sink$ = factory(sources)
             }
+            const originalDOMSink = sink$[this.DOMSourceName]
+            sink$[this.DOMSourceName] = propState.stream.map(state => originalDOMSink.compose(debounce(10))).flatten()
             acc[id] = { sink$, props$, children$ }
           }
           return acc
@@ -749,8 +751,9 @@ function getComponents(currentElement, componentNames, isNestedElement=false) {
 }
 
 function injectComponents(currentElement, components, componentNames, isNestedElement=false) {
+  if (!currentElement) return
   if (currentElement.data?.componentsInjected) return currentElement
-  if (!isNestedElement) currentElement.data.componentsInjected = true
+  if (!isNestedElement && currentElement.data) currentElement.data.componentsInjected = true
 
 
   const sel          = currentElement.sel || 'NO SELECTOR'
