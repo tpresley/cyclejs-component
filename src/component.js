@@ -34,7 +34,7 @@ const HYDRATE_ACTION          = 'HYDRATE'
 let IS_ROOT_COMPONENT = true
 
 
-export const ABORT = '~~ABORT~~'
+export const ABORT = '~#~#~ABORT~#~#~'
 
 export default function component (opts) {
   const { name, sources, isolateOpts, stateSourceName='STATE' } = opts
@@ -101,6 +101,7 @@ class Component {
   // sendResponse$
   // children$
   // vdom$
+  // subComponentSink$
 
   // [ INSTANTIATED STREAM OPERATOR ]
   // log
@@ -127,6 +128,8 @@ class Component {
     this.stateSourceName   = stateSourceName
     this.requestSourceName = requestSourceName
     this.sourceNames       = Object.keys(sources)
+
+    this.isSubComponent = this.sourceNames.includes('props$')
 
     const state$ = sources[stateSourceName] && sources[stateSourceName].stream
 
@@ -157,6 +160,7 @@ class Component {
     this.initModel$()
     this.initSendResponse$()
     this.initChildren$()
+    this.initSubComponentSink$()
     this.initVdom$()
     this.initSinks()
   }
@@ -447,6 +451,19 @@ class Component {
     }, initial)
   }
 
+  initSubComponentSink$() {
+    const subComponentSink$ = xs.create({
+      start: listener => {
+        this.newSubComponentSinks = listener.next.bind(listener)
+      },
+      stop: _ => {
+
+      }
+    })
+    subComponentSink$.subscribe({ next: _ => _ })
+    this.subComponentSink$ = subComponentSink$.filter(sinks => Object.keys(sinks).length > 0)
+  }
+
   initVdom$() {
     if (typeof this.view != 'function') {
       this.vdom$ = xs.of(null)
@@ -498,51 +515,81 @@ class Component {
 
         if (entries.length === 0) return rootEntry
 
-        return entries.reduce((acc, [id, el]) => {
+        const newComponents =  entries.reduce((acc, [id, el]) => {
           const componentName = el.sel
           const data  = el.data
           const props = data.props || {}
           const children = el.children || []
           const isCollection = data.isCollection || false
           const isSwitchable = data.isSwitchable || false
+
           if (previousComponents[id]) {
             const entry = previousComponents[id]
             acc[id] = entry
             entry.props$.shamefullySendNext(props)
             entry.children$.shamefullySendNext(children)
-          } else {
-            const factory   = this.components[componentName]
-            const props$    = xs.create().startWith(props)
-            const children$ = xs.create().startWith(children)
-            const propState = new StateSource(props$.map(val => val.value))
-            const sources   = { ...this.sources, [this.stateSourceName]: propState, props$, children$ }
-            let sink$
-            if (isCollection) {
-              const factory   = this.components[data.component]
-              const lense     = { get: state => state }
-              sink$ = collection(factory, lense)(sources)
-            } else if (isSwitchable) {
-
-            } else {
-              sink$ = factory(sources)
-            }
-            const originalDOMSink = sink$[this.DOMSourceName]
-            sink$[this.DOMSourceName] = propState.stream.map(state => originalDOMSink.compose(debounce(10))).flatten()
-            acc[id] = { sink$, props$, children$ }
+            return acc
           }
+
+          const factory   = this.components[componentName]
+          const props$    = xs.create().startWith(props)
+          const children$ = xs.create().startWith(children)
+          let propState
+          let sink$
+          if (isCollection) {
+            propState = new StateSource(props$.map(val => val.value).remember())
+            const sources   = { ...this.sources, [this.stateSourceName]: propState, props$, children$ }
+            const factory   = this.components[data.component]
+            const lense     = { get: state => state, set: state => state }
+            sink$ = collection(factory, lense)(sources)
+          } else if (isSwitchable) {
+
+          } else {
+            const lense = (props) => {
+              const state = props.state
+              if (typeof state === 'undefined') return props
+              if (typeof state !== 'object')    return state
+
+              const copy = { ...props }
+              delete copy.state
+              return { ...copy, ...state }
+            }
+            propState = new StateSource(props$.map(lense))
+            const sources   = { ...this.sources, [this.stateSourceName]: propState, props$, children$ }
+            sink$ = factory(sources)
+          }
+          const originalDOMSink = sink$[this.DOMSourceName]
+          sink$[this.DOMSourceName] = propState.stream.map(state => originalDOMSink.compose(debounce(2))).flatten()
+          acc[id] = { sink$, props$, children$ }
           return acc
         }, rootEntry)
 
+        return newComponents
       }, {})
       .map(components => {
         const root  = components['::ROOT::']
         let ids = []
-        const entries = Object.entries(components)
+        const entries = Object.entries(components).filter(([id]) => id !== '::ROOT::')
 
-        if (entries.length === 1) return xs.of(root)
+        if (entries.length === 0) return xs.of(root)
 
-        const vdom$ = Object.entries(components)
-          .filter(([id]) => id !== '::ROOT::')
+        const sinkArrays = entries
+          .reduce((acc, [id, val]) => {
+            Object.entries(val.sink$).forEach(([name, stream]) => {
+              if (!acc[name]) acc[name] = []
+              if (name !== this.DOMSourceName) acc[name].push(stream)
+            })
+            return acc
+          }, {})
+
+        const sink$ = Object.entries(sinkArrays).reduce((acc, [sink, streams]) => {
+          acc[sink] = xs.merge(...streams)
+          return acc
+        }, {})
+
+        this.newSubComponentSinks(sink$)
+
+        const vdom$ = entries
           .map(([id, val]) => {
             ids.push(id)
             return val.sink$[this.DOMSourceName]
@@ -568,10 +615,11 @@ class Component {
   initSinks() {
     this.sinks = this.sourceNames.reduce((acc, name) => {
       if (name == this.DOMSourceName) return acc
+      const subComponentSink$ = this.subComponentSink$ ? this.subComponentSink$.map(sinks => sinks[name]).filter(sink => !!sink).flatten() : xs.never()
       if (name === this.stateSourceName) {
         acc[name] = xs.merge((this.model$[name] || xs.never()), this.sources[this.stateSourceName].stream.filter(_ => false), ...this.children$[name])
       } else {
-        acc[name] = xs.merge((this.model$[name] || xs.never()), ...this.children$[name])
+        acc[name] = xs.merge((this.model$[name] || xs.never()), subComponentSink$, ...this.children$[name])
       }
       return acc
     }, {})
@@ -602,9 +650,10 @@ class Component {
           if (data && data.data && data._reqId) data = data.data
           if (isStateSink) {
             return (state) => {
-              const enhancedState = this.addCalculated(state)
+              const _state = this.isSubComponent ? this.currentState : state
+              const enhancedState = this.addCalculated(_state)
               const newState = reducer(enhancedState, data, next, action.req)
-              if (newState == ABORT) return state
+              if (newState == ABORT) return _state
               return this.cleanupCalculated(newState)
             }
           } else {
@@ -724,8 +773,7 @@ function getComponents(currentElement, componentNames, isNestedElement=false) {
       currentElement.data.isCollection = true
       currentElement.data.component = props.component
       // currentElement.data.componentArray = props.value
-    }
-    if (isSwitchable) {
+    } else if (isSwitchable) {
       if (!props.components)                    throw new Error(`Switchable element missing required 'components' property`)
       if (typeof props.components !== 'object') throw new Error(`Invalid 'components' property of switchable element: found ${ typeof props.components } requires object mapping names to component factories`)
       const switchableComponents = Object.values(props.components)
@@ -736,6 +784,8 @@ function getComponents(currentElement, componentNames, isNestedElement=false) {
       currentElement.data.isSwitchable = true
       currentElement.data.components = props.components
       currentElement.data.currentComponent = props.current
+    } else {
+
     }
     found[id] = currentElement
   }
@@ -766,20 +816,20 @@ function injectComponents(currentElement, components, componentNames, isNestedEl
   if (isComponent) {
     const id  = getComponentIdFromElement(currentElement)
     const component = components[id]
-    let children
-    currentElement.sel = 'div'
     if (isCollection) {
+      currentElement.sel = 'div'
       delete currentElement.elm
-      children = Object.entries(component).filter(([key, value]) => key !== 'data' && key !== 'key').map(([key, value], index) => value)
+      currentElement.children = Object.entries(component).filter(([key, value]) => key !== 'data' && key !== 'key').map(([key, value], index) => value)
+      return currentElement
     } else {
-      children = [component]
+      return component
     }
-    currentElement.children = children
   } else if (children.length > 0) {
     currentElement.children = children.map(child => injectComponents(child, components, componentNames)).flat()
+    return currentElement
+  } else {
+    return currentElement
   }
-
-  return currentElement
 }
 
 function getComponentIdFromElement(el) {
