@@ -1,6 +1,6 @@
 'use strict'
 
-import xs, { Stream } from 'xstream'
+import { default as xs, Stream } from 'xstream'
 import dropRepeats from 'xstream/extra/dropRepeats'
 
 

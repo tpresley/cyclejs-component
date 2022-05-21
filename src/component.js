@@ -4,23 +4,23 @@ import isolate from '@cycle/isolate'
 import collection from './collection.js'
 import { StateSource } from '@cycle/state'
 
-import xs, { Stream } from 'xstream'
-import Delay from 'xstream/extra/delay.js'
-import Concat from 'xstream/extra/concat.js'
+import { default as xs, Stream } from 'xstream'
+import { default as delay } from 'xstream/extra/delay.js'
+import { default as concat } from 'xstream/extra/concat.js'
 import debounce from 'xstream/extra/debounce.js'
-import DropRepeats from 'xstream/extra/dropRepeats.js'
+import { default as dropRepeats } from 'xstream/extra/dropRepeats.js'
 
 
 // import syntax has bugs for xstream in Node context
 // this attempts to normalize to work in both Node and browser
-if (!xs.never && xs.default && xs.default.never) {
-  xs.never = xs.default.never
-  xs.merge = xs.default.merge
-  xs.of    = xs.default.of
-}
-const concat = (Concat && Concat.default) ? Concat.default : Concat
-const delay  = (Delay && Delay.default) ? Delay.default : Delay
-const dropRepeats = (DropRepeats && DropRepeats.default) ? DropRepeats.default : DropRepeats
+// if (!xs.never && xs.default && xs.default.never) {
+//   xs.never = xs.default.never
+//   xs.merge = xs.default.merge
+//   xs.of    = xs.default.of
+// }
+// const concat = (Concat && Concat.default) ? Concat.default : Concat
+// const delay  = (Delay && Delay.default) ? Delay.default : Delay
+// const dropRepeats = (DropRepeats && DropRepeats.default) ? DropRepeats.default : DropRepeats
 
 const ENVIRONMENT = ((typeof window != 'undefined' && window) || (process && process.env)) || {}
 
