@@ -39,10 +39,6 @@ export const ABORT = '~#~#~ABORT~#~#~'
 export default function component (opts) {
   const { name, sources, isolateOpts, stateSourceName='STATE' } = opts
 
-  if (typeof name !== 'string') {
-    throw new Error(`No name provided for component!`)
-  }
-
   if (sources && typeof sources !== 'object') {
     throw new Error('Sources must be a Cycle.js sources object:', name)
   }
