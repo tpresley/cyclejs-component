@@ -131,10 +131,10 @@ class Component {
 
     if (state$) {
       this.currentState = initialState || {}
-      this.sources[this.stateSourceName].stream = state$.map(val => {
+      this.sources[this.stateSourceName] = new StateSource(state$.map(val => {
         this.currentState = val
         return val
-      })
+      }))
     }
 
     if (IS_ROOT_COMPONENT && typeof this.intent === 'undefined' && typeof this.model === 'undefined') {
