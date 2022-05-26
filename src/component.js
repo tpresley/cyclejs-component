@@ -131,10 +131,8 @@ class Component {
 
     if (state$) {
       this.currentState = initialState || {}
-      this.sources[this.stateSourceName].stream.subscribe({
-        next: val => {
-          this.currentState = val
-        }
+      this.sources[this.stateSourceName].stream = state$.map(val => {
+        this.currentState = val
       })
     }
 
@@ -732,12 +730,11 @@ class Component {
   return function (msg) {
     const fixedMsg = (typeof msg === 'function') ? msg : _ => msg
     return stream => {
-      stream.map(fixedMsg).subscribe({
-        next: msg => {
-          if (ENVIRONMENT.DEBUG == 'true' || ENVIRONMENT.DEBUG === true) console.log(`[${context}] ${msg}`)
+      return stream.debug(msg => {
+        if (ENVIRONMENT.DEBUG == 'true' || ENVIRONMENT.DEBUG === true) {
+          console.log(`[${context}] ${fixedMsg(msg)}`)
         }
       })
-      return stream
     }
   }
 }
