@@ -133,6 +133,7 @@ class Component {
       this.currentState = initialState || {}
       this.sources[this.stateSourceName].stream = state$.map(val => {
         this.currentState = val
+        return val
       })
     }
 
