@@ -815,7 +815,7 @@ function injectComponents(currentElement, components, componentNames, isNestedEl
     if (isCollection) {
       currentElement.sel = 'div'
       delete currentElement.elm
-      currentElement.children = Object.entries(component).filter(([key, value]) => key !== 'data' && key !== 'key').map(([key, value], index) => value)
+      currentElement.children = component
       return currentElement
     } else {
       return component

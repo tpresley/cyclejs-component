@@ -27,6 +27,7 @@ export default function collection(component, stateLense, combineList=['DOM'], g
     const isolateOpts = {[stateSourceName]: stateLense}
 
     globalList.forEach(global => isolateOpts[global] = null)
+    combineList.forEach(combine => isolateOpts[combine] = null)
 
     return makeIsolatedCollection(collectionOpts, isolateOpts, sources)
   }
